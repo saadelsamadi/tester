@@ -1,0 +1,15 @@
+Flask
+flask-cors
+joblib
+numpy
+tldextract
+requests
+pyngrok
+python-whois
+dnspython
+opencv-python-headless
+scipy
+scikit-image
+scikit-learn
+Pillow
+werkzeug
