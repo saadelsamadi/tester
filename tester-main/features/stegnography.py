@@ -4,6 +4,8 @@ import io
 import base64
 from flask_cors import CORS
 import os
+import string
+import math
 
 stegnography_bp = Blueprint('stegnography', __name__)
 CORS(stegnography_bp)
@@ -30,9 +32,45 @@ def lsb_distribution(image):
 
     return ratio_ones, ratio_zeros
 
-def is_stego_present(image, threshold=0.05):
+def lsb_entropy(image):
+    """حساب إنتروبيا البتات الأقل أهمية (LSB)"""
+    width, height = image.size
+    bits = []
+
+    for y in range(height):
+        for x in range(width):
+            r, g, b = image.getpixel((x, y))
+            bits.append(r & 1)
+            bits.append(g & 1)
+            bits.append(b & 1)
+
+    total = len(bits)
+    if total == 0:
+        return 0.0
+
+    count_ones = sum(bits)
+    count_zeros = total - count_ones
+
+    p1 = count_ones / total if count_ones != 0 else 1e-10
+    p0 = count_zeros / total if count_zeros != 0 else 1e-10
+
+    entropy = -(p1 * math.log2(p1) + p0 * math.log2(p0))
+    return entropy
+
+def is_probably_text(s, threshold=0.95):
+    if not s:
+        return False
+    printable_chars = set(string.printable)
+    count_printable = sum(c in printable_chars for c in s)
+    return (count_printable / len(s)) >= threshold
+
+def is_stego_present(image, ratio_threshold=0.1, entropy_threshold=0.95):
     ratio_ones, ratio_zeros = lsb_distribution(image)
-    return abs(ratio_ones - ratio_zeros) < threshold
+    diff = abs(ratio_ones - ratio_zeros)
+    entropy = lsb_entropy(image)
+
+    # شرط الكشف: فرق التوزيع كبير (أكبر من العتبة) و إنتروبيا عالية (قريبة من 1)
+    return (diff > ratio_threshold) and (entropy > entropy_threshold)
 
 def extract_message_from_image(image):
     width, height = image.size
@@ -45,7 +83,7 @@ def extract_message_from_image(image):
             bits += str(g & 1)
             bits += str(b & 1)
 
-    end_signal = '11111110'
+    end_signal = '11111110'  # نهاية الرسالة
     if end_signal not in bits:
         return None
 
@@ -55,11 +93,15 @@ def extract_message_from_image(image):
         if byte == end_signal:
             break
         try:
-            message += chr(int(byte, 2))
+            char = chr(int(byte, 2))
+            message += char
         except:
             return None
 
-    return message
+    if is_probably_text(message):
+        return message
+    else:
+        return None
 
 @stegnography_bp.route('/stegnography', methods=['POST'])
 def stegnography_route():
