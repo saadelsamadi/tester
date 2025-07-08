@@ -7,6 +7,33 @@ import os
 
 stegnography_bp = Blueprint('stegnography', __name__)
 CORS(stegnography_bp)
+
+def lsb_distribution(image):
+    width, height = image.size
+    count_ones = 0
+    count_zeros = 0
+
+    for y in range(height):
+        for x in range(width):
+            r, g, b = image.getpixel((x, y))
+            if (r & 1) == 1:
+                count_ones += 1
+            else:
+                count_zeros += 1
+
+    total = count_ones + count_zeros
+    if total == 0:
+        return 0, 0
+    ratio_ones = count_ones / total
+    ratio_zeros = count_zeros / total
+
+    return ratio_ones, ratio_zeros
+
+def is_stego_present(image, threshold=0.05):
+    ratio_ones, ratio_zeros = lsb_distribution(image)
+    # لو الفرق صغير بين النسبتين، احتمال وجود ستيجانو أعلى
+    return abs(ratio_ones - ratio_zeros) < threshold
+
 def extract_message_from_image(image):
     width, height = image.size
     bits = ""
@@ -25,13 +52,17 @@ def extract_message_from_image(image):
         byte = bits[i:i + 8]
         if byte == end_signal:
             break
-        message += chr(int(byte, 2))
+        try:
+            message += chr(int(byte, 2))
+        except:
+            return None
 
     return message
 
-
 @stegnography_bp.route('/stegnography', methods=['POST'])
 def stegnography_route():
+    image = None
+
     if 'image' in request.files:
         file = request.files['image']
         if file.filename == '':
@@ -46,6 +77,8 @@ def stegnography_route():
             file.save(save_path)  # حفظ الصورة على السيرفر
             image = Image.open(save_path)
             image = image.convert("RGB")
+            # حذف الصورة بعد الفتح (اختياري)
+            os.remove(save_path)
         except:
             return jsonify({
                 "hidden": False,
@@ -72,9 +105,15 @@ def stegnography_route():
             "message": None
         }), 400
 
-    hidden_message = extract_message_from_image(image)
+    hidden = False
+    message = None
+
+    if is_stego_present(image):
+        message = extract_message_from_image(image)
+        if message:
+            hidden = True
 
     return jsonify({
-        "hidden": hidden_message is not None,
-        "message": hidden_message if hidden_message else None
+        "hidden": hidden,
+        "message": message
     })
