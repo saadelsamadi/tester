@@ -16,10 +16,11 @@ def lsb_distribution(image):
     for y in range(height):
         for x in range(width):
             r, g, b = image.getpixel((x, y))
-            if (r & 1) == 1:
-                count_ones += 1
-            else:
-                count_zeros += 1
+            for val in (r, g, b):
+                if (val & 1) == 1:
+                    count_ones += 1
+                else:
+                    count_zeros += 1
 
     total = count_ones + count_zeros
     if total == 0:
@@ -31,7 +32,6 @@ def lsb_distribution(image):
 
 def is_stego_present(image, threshold=0.05):
     ratio_ones, ratio_zeros = lsb_distribution(image)
-    # لو الفرق صغير بين النسبتين، احتمال وجود ستيجانو أعلى
     return abs(ratio_ones - ratio_zeros) < threshold
 
 def extract_message_from_image(image):
@@ -42,6 +42,8 @@ def extract_message_from_image(image):
         for x in range(width):
             r, g, b = image.getpixel((x, y))
             bits += str(r & 1)
+            bits += str(g & 1)
+            bits += str(b & 1)
 
     end_signal = '11111110'
     if end_signal not in bits:
@@ -66,24 +68,16 @@ def stegnography_route():
     if 'image' in request.files:
         file = request.files['image']
         if file.filename == '':
-            return jsonify({
-                "hidden": False,
-                "message": None
-            }), 400
+            return jsonify({"hidden": False, "message": None}), 400
 
         filename = file.filename
         save_path = os.path.join(os.getcwd(), filename)
         try:
-            file.save(save_path)  # حفظ الصورة على السيرفر
-            image = Image.open(save_path)
-            image = image.convert("RGB")
-            # حذف الصورة بعد الفتح (اختياري)
+            file.save(save_path)
+            image = Image.open(save_path).convert("RGB")
             os.remove(save_path)
         except:
-            return jsonify({
-                "hidden": False,
-                "message": None
-            }), 400
+            return jsonify({"hidden": False, "message": None}), 400
 
     elif request.is_json and 'image_base64' in request.json:
         try:
@@ -92,18 +86,11 @@ def stegnography_route():
                 base64_str = base64_str.split('base64,')[1]
 
             image_data = base64.b64decode(base64_str)
-            image = Image.open(io.BytesIO(image_data))
-            image = image.convert("RGB")
+            image = Image.open(io.BytesIO(image_data)).convert("RGB")
         except:
-            return jsonify({
-                "hidden": False,
-                "message": None
-            }), 400
+            return jsonify({"hidden": False, "message": None}), 400
     else:
-        return jsonify({
-            "hidden": False,
-            "message": None
-        }), 400
+        return jsonify({"hidden": False, "message": None}), 400
 
     hidden = False
     message = None
