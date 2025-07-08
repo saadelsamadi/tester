@@ -13,4 +13,3 @@ scikit-image
 scikit-learn
 Pillow
 werkzeug
-stegano
