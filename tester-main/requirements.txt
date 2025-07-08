@@ -11,5 +11,6 @@ opencv-python-headless
 scipy
 scikit-image
 scikit-learn
+stegano
 Pillow
 werkzeug
