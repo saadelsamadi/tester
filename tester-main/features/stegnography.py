@@ -7,31 +7,42 @@ import os
 
 stegnography_bp = Blueprint('stegnography', __name__)
 CORS(stegnography_bp)
-def extract_message_from_image(image):
+
+def analyze_lsb_entropy(image, threshold=0.48):
+    """
+    يحلل توزيع LSB في Red channel.
+    لو التوزيع قريب جدًا من 50% => احتمال Steganography.
+    threshold: أقصى انحراف مقبول من 0.5.
+    """
     width, height = image.size
-    bits = ""
+    lsb_list = []
 
     for y in range(height):
         for x in range(width):
             r, g, b = image.getpixel((x, y))
-            bits += str(r & 1)
+            lsb_list.append(r & 1)
 
-    end_signal = '11111110'
-    if end_signal not in bits:
-        return None
+    zeros = lsb_list.count(0)
+    ones = lsb_list.count(1)
+    total = len(lsb_list)
 
-    message = ""
-    for i in range(0, len(bits), 8):
-        byte = bits[i:i + 8]
-        if byte == end_signal:
-            break
-        message += chr(int(byte, 2))
+    if total == 0:
+        return False, 0.0
 
-    return message
+    ratio = ones / total
+
+    # لو النسبة قريبة جدًا من 50% => توزيع عشوائي => احتمال Steganography
+    if abs(ratio - 0.5) < threshold:
+        return True, ratio
+    else:
+        return False, ratio
 
 
 @stegnography_bp.route('/stegnography', methods=['POST'])
 def stegnography_route():
+    save_path = None
+
+    # استقبال الصورة
     if 'image' in request.files:
         file = request.files['image']
         if file.filename == '':
@@ -43,7 +54,7 @@ def stegnography_route():
         filename = file.filename
         save_path = os.path.join(os.getcwd(), filename)
         try:
-            file.save(save_path)  # حفظ الصورة على السيرفر
+            file.save(save_path)
             image = Image.open(save_path)
             image = image.convert("RGB")
         except:
@@ -72,9 +83,15 @@ def stegnography_route():
             "message": None
         }), 400
 
-    hidden_message = extract_message_from_image(image)
+    # تحليل الصورة
+    hidden, ratio = analyze_lsb_entropy(image)
+
+    # حذف الصورة من السيرفر بعد التحليل (اختياري)
+    if save_path and os.path.exists(save_path):
+        os.remove(save_path)
 
     return jsonify({
-        "hidden": hidden_message is not None,
-        "message": hidden_message if hidden_message else None
+        "hidden": hidden,
+        "entropy_ratio": ratio,
+        "message": "High LSB randomness detected (possible steganography)" if hidden else "No significant steganography patterns detected"
     })
