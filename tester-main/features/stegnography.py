@@ -4,33 +4,52 @@ import io
 import base64
 from flask_cors import CORS
 import os
-from stegano import lsb
 
 stegnography_bp = Blueprint('stegnography', __name__)
 CORS(stegnography_bp)
+def extract_message_from_image(image):
+    width, height = image.size
+    bits = ""
+
+    for y in range(height):
+        for x in range(width):
+            r, g, b = image.getpixel((x, y))
+            bits += str(r & 1)
+
+    end_signal = '11111110'
+    if end_signal not in bits:
+        return None
+
+    message = ""
+    for i in range(0, len(bits), 8):
+        byte = bits[i:i + 8]
+        if byte == end_signal:
+            break
+        message += chr(int(byte, 2))
+
+    return message
+
 
 @stegnography_bp.route('/stegnography', methods=['POST'])
 def stegnography_route():
-    save_path = None
-
-    # استقبال الصورة من form-data أو base64
     if 'image' in request.files:
         file = request.files['image']
         if file.filename == '':
             return jsonify({
                 "hidden": False,
-                "message": "No image file provided."
+                "message": None
             }), 400
 
         filename = file.filename
         save_path = os.path.join(os.getcwd(), filename)
         try:
-            file.save(save_path)
-            image = Image.open(save_path).convert("RGB")
-        except Exception as e:
+            file.save(save_path)  # حفظ الصورة على السيرفر
+            image = Image.open(save_path)
+            image = image.convert("RGB")
+        except:
             return jsonify({
                 "hidden": False,
-                "message": "Failed to open image."
+                "message": None
             }), 400
 
     elif request.is_json and 'image_base64' in request.json:
@@ -40,38 +59,22 @@ def stegnography_route():
                 base64_str = base64_str.split('base64,')[1]
 
             image_data = base64.b64decode(base64_str)
-            image = Image.open(io.BytesIO(image_data)).convert("RGB")
-            save_path = os.path.join(os.getcwd(), "temp_image.png")
-            image.save(save_path)
-        except Exception as e:
+            image = Image.open(io.BytesIO(image_data))
+            image = image.convert("RGB")
+        except:
             return jsonify({
                 "hidden": False,
-                "message": "Failed to decode base64 image."
+                "message": None
             }), 400
     else:
         return jsonify({
             "hidden": False,
-            "message": "No image data provided."
+            "message": None
         }), 400
 
-    # استخدام مكتبة stegano للكشف
-    try:
-        secret = lsb.reveal(save_path)
-        if secret is not None:
-            hidden = True
-            message = "Hidden message detected in image."
-        else:
-            hidden = False
-            message = "No hidden message detected."
-    except Exception as e:
-        hidden = False
-        message = f"Error during steganography detection: {str(e)}"
-
-    # حذف الصورة بعد الفحص
-    if save_path and os.path.exists(save_path):
-        os.remove(save_path)
+    hidden_message = extract_message_from_image(image)
 
     return jsonify({
-        "hidden": hidden,
-        "message": message
+        "hidden": hidden_message is not None,
+        "message": hidden_message if hidden_message else None
     })
