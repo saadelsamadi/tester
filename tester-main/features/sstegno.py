@@ -18,7 +18,7 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
 def allowed_extension(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def detect_steganography(video_path):
     cap = cv2.VideoCapture(video_path)
@@ -44,21 +44,24 @@ def detect_steganography(video_path):
         if len(counts) == 2:
             lsb_distribution.append(counts)
 
-        # DCT mean
-        dct_transform = fftpack.dct(fftpack.dct(np.float32(gray_frame), axis=0, norm='ortho'), axis=1, norm='ortho')
-        dct_scores.append(np.mean(dct_transform))
+        # DCT
+        dct_transform = fftpack.dct(
+            fftpack.dct(np.float32(gray_frame), axis=0, norm='ortho'),
+            axis=1,
+            norm='ortho'
+        )
+        dct_scores.append(float(np.mean(dct_transform)))
 
         # Entropy
-        entropy_scores.append(shannon_entropy(gray_frame))
+        entropy_scores.append(float(shannon_entropy(gray_frame)))
 
     cap.release()
 
-    # Aggregate metrics
     lsb_anomaly_detected = False
     dct_anomaly_detected = False
     entropy_anomaly_detected = False
-
     lsb_p_value = 1.0
+
     if lsb_distribution:
         observed = np.sum(lsb_distribution, axis=0)
         expected = np.full_like(observed, np.mean(observed))
@@ -66,15 +69,15 @@ def detect_steganography(video_path):
         if lsb_p_value < 0.05:
             lsb_anomaly_detected = True
 
-    avg_dct = np.mean(dct_scores) if dct_scores else 0
+    avg_dct = float(np.mean(dct_scores)) if dct_scores else 0
     if avg_dct > 50:
         dct_anomaly_detected = True
 
-    avg_entropy = np.mean(entropy_scores) if entropy_scores else 0
+    avg_entropy = float(np.mean(entropy_scores)) if entropy_scores else 0
     if avg_entropy > 7.5:
         entropy_anomaly_detected = True
 
-    # Confidence calculation (0-1)
+    # Confidence
     confidence = 0.0
     if lsb_anomaly_detected:
         confidence += 0.4
@@ -83,23 +86,19 @@ def detect_steganography(video_path):
     if entropy_anomaly_detected:
         confidence += 0.3
 
-    # Build result string
     if confidence > 0.5:
         result = f"There is hidden message found in video (confidence: {confidence:.2f})"
     else:
         result = f"There is no hidden message found in the video (confidence: {confidence:.2f})"
 
-    # Extra details for debugging (optional, comment out if not needed)
-    result_details = {
-        "lsb_p_value": lsb_p_value,
-        "avg_dct": avg_dct,
-        "avg_entropy": avg_entropy,
-        "confidence": round(confidence, 2)
-    }
-
     return {
         "summary": result,
-        "details": result_details
+        "details": {
+            "lsb_p_value": float(lsb_p_value),
+            "avg_dct": avg_dct,
+            "avg_entropy": avg_entropy,
+            "confidence": round(confidence, 2)
+        }
     }
 
 @sstegno_bp.route('/sstegno', methods=['POST'])
