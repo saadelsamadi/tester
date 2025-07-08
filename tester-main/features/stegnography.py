@@ -5,72 +5,38 @@ import base64
 from flask_cors import CORS
 import os
 import string
-import math
 
 stegnography_bp = Blueprint('stegnography', __name__)
 CORS(stegnography_bp)
 
-def lsb_distribution(image):
-    width, height = image.size
-    count_ones = 0
-    count_zeros = 0
+def chi_square_test(image):
+    """
+    اختبار Chi-Square لتوزيع LSB في الصورة
+    كل ما كانت القيمة أقل => احتمال وجود ستجانو أعلى.
+    العتبة الافتراضية 15000 (يمكن تعديلها حسب الحاجة).
+    """
+    pixels = list(image.getdata())
 
-    for y in range(height):
-        for x in range(width):
-            r, g, b = image.getpixel((x, y))
-            for val in (r, g, b):
-                if (val & 1) == 1:
-                    count_ones += 1
-                else:
-                    count_zeros += 1
+    freq = [0] * 256
+    for pixel in pixels:
+        for val in pixel[:3]:  # فقط R,G,B
+            freq[val] += 1
 
-    total = count_ones + count_zeros
-    if total == 0:
-        return 0, 0
-    ratio_ones = count_ones / total
-    ratio_zeros = count_zeros / total
+    chi_square_total = 0
+    for i in range(0, 256, 2):
+        observed_0 = freq[i]
+        observed_1 = freq[i + 1]
+        expected = (observed_0 + observed_1) / 2
 
-    return ratio_ones, ratio_zeros
+        if expected > 0:
+            chi_square_total += ((observed_0 - expected) ** 2) / expected
+            chi_square_total += ((observed_1 - expected) ** 2) / expected
 
-def lsb_entropy(image):
-    """حساب إنتروبيا البتات الأقل أهمية (LSB)"""
-    width, height = image.size
-    bits = []
+    return chi_square_total
 
-    for y in range(height):
-        for x in range(width):
-            r, g, b = image.getpixel((x, y))
-            bits.append(r & 1)
-            bits.append(g & 1)
-            bits.append(b & 1)
-
-    total = len(bits)
-    if total == 0:
-        return 0.0
-
-    count_ones = sum(bits)
-    count_zeros = total - count_ones
-
-    p1 = count_ones / total if count_ones != 0 else 1e-10
-    p0 = count_zeros / total if count_zeros != 0 else 1e-10
-
-    entropy = -(p1 * math.log2(p1) + p0 * math.log2(p0))
-    return entropy
-
-def is_probably_text(s, threshold=0.95):
-    if not s:
-        return False
-    printable_chars = set(string.printable)
-    count_printable = sum(c in printable_chars for c in s)
-    return (count_printable / len(s)) >= threshold
-
-def is_stego_present(image, ratio_threshold=0.1, entropy_threshold=0.95):
-    ratio_ones, ratio_zeros = lsb_distribution(image)
-    diff = abs(ratio_ones - ratio_zeros)
-    entropy = lsb_entropy(image)
-
-    # شرط الكشف: فرق التوزيع كبير (أكبر من العتبة) و إنتروبيا عالية (قريبة من 1)
-    return (diff > ratio_threshold) and (entropy > entropy_threshold)
+def is_stego_present(image, chi_threshold=15000):
+    chi_value = chi_square_test(image)
+    return chi_value < chi_threshold
 
 def extract_message_from_image(image):
     width, height = image.size
@@ -83,7 +49,7 @@ def extract_message_from_image(image):
             bits += str(g & 1)
             bits += str(b & 1)
 
-    end_signal = '11111110'  # نهاية الرسالة
+    end_signal = '11111110'
     if end_signal not in bits:
         return None
 
@@ -93,15 +59,15 @@ def extract_message_from_image(image):
         if byte == end_signal:
             break
         try:
-            char = chr(int(byte, 2))
-            message += char
+            message += chr(int(byte, 2))
         except:
             return None
 
-    if is_probably_text(message):
+    # تحقق أن الرسالة تحتوي على حروف قابلة للطباعة فقط
+    printable_chars = set(string.printable)
+    if all(c in printable_chars for c in message):
         return message
-    else:
-        return None
+    return None
 
 @stegnography_bp.route('/stegnography', methods=['POST'])
 def stegnography_route():
@@ -118,7 +84,7 @@ def stegnography_route():
             file.save(save_path)
             image = Image.open(save_path).convert("RGB")
             os.remove(save_path)
-        except:
+        except Exception:
             return jsonify({"hidden": False, "message": None}), 400
 
     elif request.is_json and 'image_base64' in request.json:
@@ -129,7 +95,7 @@ def stegnography_route():
 
             image_data = base64.b64decode(base64_str)
             image = Image.open(io.BytesIO(image_data)).convert("RGB")
-        except:
+        except Exception:
             return jsonify({"hidden": False, "message": None}), 400
     else:
         return jsonify({"hidden": False, "message": None}), 400
