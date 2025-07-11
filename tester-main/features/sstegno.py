@@ -7,6 +7,7 @@ from skimage.measure import shannon_entropy
 import os
 import uuid
 from flask_cors import CORS
+import base64
 from werkzeug.utils import secure_filename
 
 sstegno_bp = Blueprint('sstegno', __name__)
@@ -18,14 +19,15 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
 def allowed_extension(filename):
-    return '.' in filename and '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def detect_steganography(video_path):
     cap = cv2.VideoCapture(video_path)
     frame_count = 0
     lsb_distribution = []
-    dct_scores = []
-    entropy_scores = []
+    lsb_anomaly_detected = False
+    dct_anomaly_detected = False
+    entropy_anomaly_detected = False
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -37,69 +39,32 @@ def detect_steganography(video_path):
             continue
 
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        # LSB distribution
         lsb_frame = np.bitwise_and(gray_frame, 1)
+
         unique, counts = np.unique(lsb_frame, return_counts=True)
         if len(counts) == 2:
             lsb_distribution.append(counts)
 
-        # DCT
-        dct_transform = fftpack.dct(
-            fftpack.dct(np.float32(gray_frame), axis=0, norm='ortho'),
-            axis=1,
-            norm='ortho'
-        )
-        dct_scores.append(float(np.mean(dct_transform)))
+        dct_transform = fftpack.dct(fftpack.dct(np.float32(gray_frame), axis=0, norm='ortho'), axis=1, norm='ortho')
+        if np.mean(dct_transform) > 50:
+            dct_anomaly_detected = True
 
-        # Entropy
-        entropy_scores.append(float(shannon_entropy(gray_frame)))
+        if shannon_entropy(gray_frame) > 7.5:
+            entropy_anomaly_detected = True
 
     cap.release()
-
-    lsb_anomaly_detected = False
-    dct_anomaly_detected = False
-    entropy_anomaly_detected = False
-    lsb_p_value = 1.0
 
     if lsb_distribution:
         observed = np.sum(lsb_distribution, axis=0)
         expected = np.full_like(observed, np.mean(observed))
-        chi_stat, lsb_p_value = chisquare(observed, expected)
-        if lsb_p_value < 0.05:
+        chi_stat, p_value = chisquare(observed, expected)
+        if p_value < 0.05:
             lsb_anomaly_detected = True
 
-    avg_dct = float(np.mean(dct_scores)) if dct_scores else 0
-    if avg_dct > 50:
-        dct_anomaly_detected = True
-
-    avg_entropy = float(np.mean(entropy_scores)) if entropy_scores else 0
-    if avg_entropy > 7.5:
-        entropy_anomaly_detected = True
-
-    # Confidence
-    confidence = 0.0
-    if lsb_anomaly_detected:
-        confidence += 0.4
-    if dct_anomaly_detected:
-        confidence += 0.3
-    if entropy_anomaly_detected:
-        confidence += 0.3
-
-    if confidence > 0.5:
-        result = f"There is hidden message found in video (confidence: {confidence:.2f})"
+    if lsb_anomaly_detected or dct_anomaly_detected or entropy_anomaly_detected:
+        return "There is hidden message found in video."
     else:
-        result = f"There is no hidden message found in the video (confidence: {confidence:.2f})"
-
-    return {
-        "summary": result,
-        "details": {
-            "lsb_p_value": float(lsb_p_value),
-            "avg_dct": avg_dct,
-            "avg_entropy": avg_entropy,
-            "confidence": round(confidence, 2)
-        }
-    }
+        return "There is no hidden message found in the video."
 
 @sstegno_bp.route('/sstegno', methods=['POST'])
 def sstegno_route():
@@ -119,12 +84,9 @@ def sstegno_route():
 
     try:
         file.save(filepath)
-        analysis = detect_steganography(filepath)
+        message = detect_steganography(filepath)
         os.remove(filepath)
-        return jsonify({
-            'result': analysis["summary"],
-            'metrics': analysis["details"]
-        }), 200
+        return jsonify({'result': message}), 200
 
     except Exception as e:
         if os.path.exists(filepath):
